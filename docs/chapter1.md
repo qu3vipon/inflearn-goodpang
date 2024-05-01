@@ -18,6 +18,34 @@ $ django-admin startproject shared .
 $ docker-compose -f ../docker-compose.db.local.yml up --build -d
 ```
 2. HelloWorld API 만들기
-3. Exception Handler 설정
+3. Exception Handler 설정 
 4. User 모델 추가 & DB 설정
-5. Authentication 설정
+```python
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql_psycopg2",
+        "NAME": "goodpang",
+        "USER": "goodpang",
+        "PASSWORD": "goodpang",
+        "HOST": "127.0.0.1",
+        "PORT": "5433",
+    }
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "django.db.backends": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+        },
+    },
+}
+```
+5. Authentication(JWT) 설정

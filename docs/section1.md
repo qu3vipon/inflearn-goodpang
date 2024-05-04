@@ -1,15 +1,15 @@
-### Chapter 1
+### Section 1 - Django Ninja 알아보기
 1. 프로젝트 세팅
 ```shell
-# ruff(linter & formatter)
-$ pre-commit install
-
 # python 가상환경 설정
 $ pyenv virtualenv 3.11.8 goodpang
 $ pyenv local goodpang
 
 # package 설치
-$ pip install -r requirements-dev.txt
+$ pip install -r ../requirements-dev.txt
+
+# ruff(linter & formatter)
+$ pre-commit install
 
 # django 프로젝트 시작
 $ django-admin startproject shared . 
@@ -134,4 +134,23 @@ def not_authorized_exception(request, exc):
         {"results": {"message": exc.message}},
         status=401,
     )
+```
+6. 응답 형식 정의
+```python
+T = TypeVar("T")
+
+def response(results: dict | list | Schema) -> dict:
+    return {"results": results}
+
+def error_response(msg: str) -> dict:
+    return {"results": {"message": msg}}
+
+class ObjectResponse(Schema, Generic[T]):
+    results: T
+
+class ErrorResponse(Schema):
+    message: str
+
+class OkResponse(Schema):
+    detail: str = "ok"
 ```

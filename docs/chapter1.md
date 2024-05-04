@@ -16,10 +16,8 @@ $ django-admin startproject shared .
 
 # postgresql(docker) 시작
 $ docker-compose -f ../docker-compose.db.local.yml up --build -d
-```
-2. HelloWorld API 만들기
-3. Exception Handler 설정 
-4. User 모델 추가 & DB 설정
+``` 
+2. DB 설정 & User 모델 추가
 ```python
 DATABASES = {
     "default": {
@@ -47,5 +45,93 @@ LOGGING = {
         },
     },
 }
+
+class ServiceUser(models.Model):
+    email = models.EmailField()
+    
+    class Meta:
+        app_label = "user"
+        db_table = "service_user"
+        constraints = [
+            models.UniqueConstraint(fields=["email"], name="unique_email"),
+        ]
 ```
-5. Authentication(JWT) 설정
+3. Health Check API 만들기
+```python
+base_api = NinjaAPI(title="Goodpang", version="0.0.0")
+
+@base_api.get("")
+def health_check_handler(request):
+    return {"ping": "pong"}
+
+urlpatterns = [
+    path("", base_api.urls),
+    path("admin/", admin.site.urls),
+]
+```
+4. Authentication(JWT)
+```python
+class NotAuthorizedException(Exception):
+    message = "Not Authorized" 
+
+class UserNotFoundException(Exception):
+    message = "User Not Found"
+
+class JWTPayload(TypedDict):
+    user_id: int
+    exp: int
+
+class AuthenticationService:
+    JWT_SECRET_KEY: ClassVar[str] = settings.SECRET_KEY
+    JWT_ALGORITHM: ClassVar[str] = "HS256"
+    
+    @staticmethod
+    def _unix_timestamp(seconds_in_future: int) -> int:
+        return int(time.time()) + seconds_in_future
+
+    def encode_token(self, user_id: int) -> str:
+        return jwt.encode(
+            {"user_id": user_id, "exp": self._unix_timestamp(seconds_in_future=24 * 60 * 60)}, self.JWT_SECRET_KEY, algorithm=self.JWT_ALGORITHM
+        )
+
+    def verify_token(self, jwt_token: str) -> int:
+        try:
+            payload: JWTPayload = jwt.decode(jwt_token, self.JWT_SECRET_KEY, algorithms=[self.JWT_ALGORITHM])
+            user_id: int = payload["user_id"]
+            exp: int = payload["exp"]
+        except Exception:  # noqa
+            raise NotAuthorizedException
+        
+        if exp < self._unix_timestamp(seconds_in_future=0):
+            raise NotAuthorizedException
+        return user_id
+    
+authentication_service = AuthenticationService()
+
+class BearerAuth(HttpBearer):
+    def authenticate(self, request, token) -> user_id:
+        user_id: int = authentication_service.verify_token(jwt_token=token)
+        if not (user := ServiceUser.objects.get(id=user_id)):
+            raise UserNotFoundException
+        request.user = user
+        return token
+
+bearer_auth = BearerAuth()
+    
+@base_api.get("/auth-test", auth=bearer_auth)
+def auth-test(request):
+    return {
+        "token": request.auth,
+        "user": request.user,
+    }
+```
+5. Exception Handler
+```python
+@base_api.exception_handler(NotAuthorizedException)
+def not_authorized_exception(request, exc):
+    return base_api.create_response(
+        request,
+        {"results": {"message": exc.message}},
+        status=401,
+    )
+```

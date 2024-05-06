@@ -24,7 +24,7 @@ class Product(models.Model):
 - 검색 속도를 향상시키기 위해 사용되는 자료구조
 - 특정 열(또는 열 조합)에 대한 정렬된 데이터를 유지하고, **빠른 데이터 검색** 및 **정렬**에 활용 
 - 좋은 index 설계를 위해서는 데이터가 조회되는 쿼리 패턴을 분석해야 한다.
-4. 카테고리(Category) 모델링
+3. 카테고리(Category) 모델링
 - self join
 ```python
 class Category(models.Model):

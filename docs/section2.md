@@ -19,6 +19,22 @@ class Product(models.Model):
         indexes = [
             models.Index(fields=["status", "price"]),
         ]
+
+router = Router(tags=["Products"])
+        
+class ProductListResponse(Schema):
+    id: int
+    name: str
+    price: int
+
+@router.get(
+  "",
+  response={
+        200: ObjectResponse[ProductListResponse],
+    },
+)
+def product_list_handler(request: HttpRequest):
+    return 200, response(Product.objects.filter(ProductStatus.ACTIVE).values("id", "name", "price"))
 ```
 2. Index란?
 - 검색 속도를 향상시키기 위해 사용되는 자료구조

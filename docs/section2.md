@@ -20,8 +20,6 @@ class Product(models.Model):
             models.Index(fields=["status", "price"]),
         ]
 
-router = Router(tags=["Products"])
-        
 class ProductDetailResponse(Schema):
     id: int
     name: str
@@ -43,6 +41,27 @@ def product_list_handler(request: HttpRequest):
         ProductListResponse(products=Product.objects.filter(status=ProductStatus.ACTIVE).values("id", "name", "price"))
     )
 
+# tests/test_product_api
+@pytest.mark.django_db
+def test_get_product_list(api_client):
+    # given
+    Product.objects.create(name="청바지", price=1, status="active")
+
+    # when
+    response = api_client.get("/products")
+
+    # then
+    assert response.status_code == 200
+    assert len(response.json()["results"]["products"]) == 1
+    assert Schema(
+        {
+            "results": {
+                "products": [
+                    {"id": int, "name": "청바지", "price": 1}
+                ]
+            }
+        }
+    ).validate(response.json())
 ```
 2. Index란?
 - 검색 속도를 향상시키기 위해 사용되는 자료구조
@@ -53,11 +72,75 @@ def product_list_handler(request: HttpRequest):
 ```python
 class Category(models.Model):
     name = models.CharField(max_length=32)
-    parent = models.ForeignKey("self", on_delete=models.CASCADE, null=True, related_name="children")
+    parent = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, related_name="children")
     
     class Meta:
         app_label = "product"
         db_table = "category"
+
+class Product(models.Model):
+    category = models.ForeignKey("Category", on_delete=models.SET_NULL, null=True)
+
+# response
+class CategoryChildResponse(Schema):
+    id: int
+    name: str
+
+class CategoryParentResponse(Schema):
+    id: int
+    name: str
+    children: List[CategoryChildResponse]
+    
+    @classmethod
+    def build(cls, category: Category):
+        return cls(
+            id=category.id,
+            name=category.name,
+            children=[
+                CategoryChildResponse(id=child.id, name=child.name)
+                for child in category.children.all()
+            ]
+        )
+
+class CategoryListResponse(Schema):
+    categories: List[CategoryParentResponse]
+    
+    @classmethod
+    def build(cls, categories: List[Category]):
+        return cls(
+            categories=[
+              CategoryParentResponse.build(category=category)
+              for category in categories
+            ]
+        )
+
+# urls
+@router.get(
+    "/categories",
+    response={
+        200: ObjectResponse[CategoryListResponse],
+    },
+)
+def categories_list_handler(request: HttpRequest):
+    return 200, response(
+        CategoryListResponse.build(categories=Category.objects.filter(parent=None))
+    )
+
+# query by category_id
+def product_list_handler(request: HttpRequest, category_id: int | None = None):
+    if category_id:
+        category: Category | None = Category.objects.filter(id=category_id).first()
+        if not category:
+            products = []
+        else:
+            category_ids: List[int] = [category.id] + list(category.children.values_list("id", flat=True))
+            products = Product.objects.filter(
+                category_id__in=category_ids, status=ProductStatus.ACTIVE
+            ).values("id", "name", "price")
+    else:
+        products = Product.objects.filter(status=ProductStatus.ACTIVE).values("id", "name", "price")
+
+    return 200, response(ProductListResponse(products=products))
 ```
 - select_related()
   - N:1 관계에서 사용
@@ -67,4 +150,3 @@ class Category(models.Model):
   - 1:N 관계에서 사용
   - 추가 쿼리(batch 쿼리)
   - eager loading -> N+1 문제 해결
-  - n depth 쿼리

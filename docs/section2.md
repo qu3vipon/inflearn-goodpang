@@ -22,19 +22,27 @@ class Product(models.Model):
 
 router = Router(tags=["Products"])
         
-class ProductListResponse(Schema):
+class ProductDetailResponse(Schema):
     id: int
     name: str
     price: int
 
+class ProductListResponse(Schema):
+    products: List[ProductDetailResponse]
+
+router = Router(tags=["Products"])
+
 @router.get(
-  "",
-  response={
+    "",
+    response={
         200: ObjectResponse[ProductListResponse],
     },
 )
 def product_list_handler(request: HttpRequest):
-    return 200, response(Product.objects.filter(ProductStatus.ACTIVE).values("id", "name", "price"))
+    return 200, response(
+        ProductListResponse(products=Product.objects.filter(status=ProductStatus.ACTIVE).values("id", "name", "price"))
+    )
+
 ```
 2. Index란?
 - 검색 속도를 향상시키기 위해 사용되는 자료구조

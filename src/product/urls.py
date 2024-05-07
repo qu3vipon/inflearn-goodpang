@@ -1,5 +1,6 @@
 from typing import List
 
+from django.contrib.postgres.search import SearchQuery
 from django.http import HttpRequest
 from ninja import Router
 
@@ -16,8 +17,14 @@ router = Router(tags=["Products"])
         200: ObjectResponse[ProductListResponse],
     },
 )
-def product_list_handler(request: HttpRequest, category_id: int | None = None):
-    if category_id:
+def product_list_handler(
+    request: HttpRequest, category_id: int | None = None, query: str | None = None
+):
+    if query:
+        products = Product.objects.filter(
+            search_vector=SearchQuery(query), status=ProductStatus.ACTIVE
+        )
+    elif category_id:
         category: Category | None = Category.objects.filter(id=category_id).first()
         if not category:
             products = []

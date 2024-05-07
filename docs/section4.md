@@ -6,11 +6,31 @@ class OrderStatus(StrEnum):
     PAID = "paid"
     CANCELLED = "cancelled"
 
+
 class Order(models.Model):
-    user = models.ForeignKey(ServiceUser, on_delete=models.CASCADE, related_name="orders")
+    user = models.ForeignKey("user.ServiceUser", on_delete=models.CASCADE, related_name="orders")
     total_price = models.PositiveIntegerField()
     status = models.CharField(max_length=8)  # pending | paid | cancelled
-    products = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "product"
+        db_table = "order"
+        indexes = [
+            models.Index(fields=["user", "status"]),
+        ]
+
+
+class OrderLine(models.Model):
+    product = models.ForeignKey("Product", on_delete=models.CASCADE)
+    order = models.ForeignKey("Order", on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField(default=1)
+    price = models.PositiveIntegerField()
+    discount_ratio = models.FloatField(default=1)
+
+    class Meta:
+        app_label = "product"
+        db_table = "order_line"
 ```
 2. PG(Payment Gateway) 연동 이해하기
   - [토스 페이먼츠 문서](https://docs.tosspayments.com/guides/basics/payment#%EA%B2%B0%EC%A0%9C-%EA%B8%B0%EC%B4%88)

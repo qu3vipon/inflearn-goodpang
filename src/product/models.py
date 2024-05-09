@@ -37,3 +37,39 @@ class Category(models.Model):
     class Meta:
         app_label = "product"
         db_table = "category"
+
+
+class OrderStatus(StrEnum):
+    PENDING = "pending"
+    PAID = "paid"
+    CANCELLED = "cancelled"
+
+
+class Order(models.Model):
+    user = models.ForeignKey(
+        "user.ServiceUser", on_delete=models.CASCADE, related_name="orders"
+    )
+    total_price = models.PositiveIntegerField(default=0)
+    status = models.CharField(
+        max_length=8, default=OrderStatus.PENDING
+    )  # pending | paid | cancelled
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "product"
+        db_table = "order"
+        indexes = [
+            models.Index(fields=["user", "status"]),
+        ]
+
+
+class OrderLine(models.Model):
+    product = models.ForeignKey("Product", on_delete=models.CASCADE)
+    order = models.ForeignKey("Order", on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField(default=1)
+    price = models.PositiveIntegerField()
+    discount_ratio = models.FloatField(default=1)
+
+    class Meta:
+        app_label = "product"
+        db_table = "order_line"

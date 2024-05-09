@@ -48,3 +48,8 @@ class CategoryListResponse(Schema):
                 for category in categories
             ]
         )
+
+
+class OrderDetailResponse(Schema):
+    id: int
+    total_price: int

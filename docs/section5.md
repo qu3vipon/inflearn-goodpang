@@ -20,28 +20,28 @@ with transaction.atomic():
     user.save()
 ```
 2. 낙관적 락(optimistic locking)
-- 데이터베이스 락을 잡지 않고, unique index와 추가 컬럼을 통해 동시성을 제어하는 방법
+- 데이터베이스 락을 잡지 않고, version 컬럼을 통해 동시성을 제어하는 방법
 - 락을 잡지 않기 때문에 비관적 락에 비해 동시성 처리가 뛰어나지만, 어플리케이션의 복잡도가 증가하고, 충돌 발생시 실패한 요청에 대한 처리가 필요함
 ```python
 class ServiceUser(models.Model):
     # ...
     version = models.PositiveIntegerField(default=0)
 
-    constraints = [
-        models.UniqueConstraint(fields=["version"], name="unique_version"),
-    ]
-    
 class UserVersionConflictException(Exception):
     message = "User Version Conflict"
 
 with transaction.atomic():
     # ...
-    user = ServiceUser.objects.get(id=user_id)
-    if user.points < total_price:
+    user = ServiceUser.objects.get(id=request.user.id)
+    if user.points < order.total_price:
         return 409, error_response(msg=UserPointsNotEnoughException.message)
-    success: int = ServiceUser.objects.filter(id=user_id, version=user.version).update(
-      points=F("points") - order.total_price,
-      version=user.version + 1,
+    
+    success: int = ServiceUser.objects.filter(
+      id=request.user.id, version=user.version
+    ).update(
+        points=F("points") - order.total_price,
+        order_count=F("order_count") + 1,
+        version=user.version + 1,
     )
     if not success:
         return 409, error_response(msg=UserVersionConflictException.message)
@@ -66,13 +66,10 @@ class Order(models.Model):
 ```
 4. 포인트 히스토리 관리 1(SCD type4)
 - [Slowly Changing Dimension](https://en.wikipedia.org/wiki/Slowly_changing_dimension)
-  - 일정하지 않게 변경되는 기록을 관리하기 위한 테이블 모델링 기법 
-- type4: 원본과 별도의 히스토리 테이블 추가
-  - 장점: JOIN 없이 곧바로 최종 결과 값 확인
-  - 단점: 중간 값 계산이 어려움(GROUP BY)
+  - 일정하지 않게 변경되는 기록을 관리하기 위한 테이블 모델링 기법
 ```python
 class UserPointsHistory(models.Model):
-    user = models.ForeignKey(ServiceUser, on_delete=models.CASCADE, related_name="points")
+    user = models.ForeignKey(ServiceUser, on_delete=models.CASCADE, related_name="points_histories")
     points_change = models.IntegerField(default=0)
     reason = models.CharField(max_length=64)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -82,9 +79,6 @@ class UserPointsHistory(models.Model):
         db_table = "user_points_history"
 ```
 5. 포인트 히스토리 관리 2(SCD type2 + type3)
-- type2 + type3: 변경 내역마다 새로운 레코드 추가 + 컬럼 추가하여 기록 관리
-  - 장점: 중간 히스토리 파악이 용이 
-  - 단점: 최종값 조회시 JOIN 발생
 ```python
 class UserPoints(models.Model):
     user = models.ForeignKey(ServiceUser, on_delete=models.CASCADE, related_name="points")
@@ -105,5 +99,11 @@ class UserPoints(models.Model):
 last_points = UserPoints.objects.filter(user_id=user_id).order_by("-version").first()
 
 points = UserPoints.objects.filter(user_id=OuterRef("pk")).order_by("-version").values("points_sum")
-user = ServiceUser.objects.annotate(points=Subquery(points[:1])).get(id=user_id)
+user = ServiceUser.objects.annotate(_points=Subquery(points[:1])).get(id=user_id)
 ```
+- type2 + type3: 변경 내역마다 새로운 레코드 추가 + 컬럼 추가하여 기록 관리
+  - 장점: 중간 히스토리 파악이 용이 
+  - 단점: 최종값 조회시 Subquery 발생
+- type4: 원본과 별도의 히스토리 테이블 추가
+  - 장점: Subquery 없이 곧바로 최종 결과 값 확인
+  - 단점: 중간 값 계산이 어려움(GROUP BY)

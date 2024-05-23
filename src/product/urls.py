@@ -33,8 +33,8 @@ from shared.response import (
     OkResponse,
 )
 from user.authentication import bearer_auth, AuthRequest
-from user.exceptions import UserPointsNotEnoughException
-from user.models import ServiceUser
+from user.exceptions import UserPointsNotEnoughException, UserVersionConflictException
+from user.models import ServiceUser, UserPointsHistory, UserPoints
 
 router = Router(tags=["Products"])
 
@@ -154,13 +154,72 @@ def confirm_order_payment_handler(request: AuthRequest, order_id: int):
         if not success:
             return 400, error_response(msg=OrderAlreadyPaidException.message)
 
-        user = ServiceUser.objects.select_for_update().get(id=request.user.id)
+        user = ServiceUser.objects.get(id=request.user.id)
         if user.points < order.total_price:
             return 409, error_response(msg=UserPointsNotEnoughException.message)
 
-        ServiceUser.objects.filter(id=request.user.id).update(
+        success: int = ServiceUser.objects.filter(
+            id=request.user.id, version=user.version
+        ).update(
             points=F("points") - order.total_price,
             order_count=F("order_count") + 1,
+            version=user.version + 1,
+        )
+
+        if not success:
+            return 409, error_response(msg=UserVersionConflictException.message)
+
+        UserPointsHistory.objects.create(
+            user=user,
+            points_change=-order.total_price,
+            reason=f"orders:{order.id}:confirm",
+        )
+
+    return 200, response(OkResponse())
+
+
+@router.post(
+    "/orders/{order_id}/confirm-v2",
+    response={
+        200: ObjectResponse[OkResponse],
+        400: ObjectResponse[ErrorResponse],
+        404: ObjectResponse[ErrorResponse],
+        409: ObjectResponse[ErrorResponse],
+    },
+    auth=bearer_auth,
+)
+def confirm_order_payment_handler_v2(request: AuthRequest, order_id: int):
+    if not (order := Order.objects.filter(id=order_id, user=request.user).first()):
+        return 404, error_response(msg=OrderNotFoundException.message)
+
+    with transaction.atomic():
+        success: int = Order.objects.filter(
+            id=order_id, status=OrderStatus.PENDING
+        ).update(status=OrderStatus.PAID)
+        if not success:
+            return 400, error_response(msg=OrderAlreadyPaidException.message)
+
+        last_points = (
+            UserPoints.objects.filter(user_id=request.user.id)
+            .order_by("-version")
+            .first()
+        )
+        if last_points.points_sum < order.total_price:
+            return 409, error_response(msg=UserPointsNotEnoughException.message)
+
+        UserPoints.objects.create(
+            user_id=request.user.id,
+            version=last_points.version + 1,
+            points_change=-order.total_price,
+            points_sum=last_points.points_sum - order.total_price,
+            reason=f"orders:{order.id}:confirm",
+        )
+
+        if not success:
+            return 409, error_response(msg=UserVersionConflictException.message)
+
+        ServiceUser.objects.filter(id=request.user.id).update(
+            order_count=F("order_count") + 1
         )
 
     return 200, response(OkResponse())

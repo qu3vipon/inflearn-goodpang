@@ -49,6 +49,7 @@ class Order(models.Model):
     user = models.ForeignKey(
         "user.ServiceUser", on_delete=models.CASCADE, related_name="orders"
     )
+    order_code = models.CharField(max_length=32, default="")
     total_price = models.PositiveIntegerField(default=0)
     status = models.CharField(
         max_length=8, default=OrderStatus.PENDING
@@ -58,6 +59,9 @@ class Order(models.Model):
     class Meta:
         app_label = "product"
         db_table = "order"
+        constraints = [
+            models.UniqueConstraint(fields=["order_code"], name="unique_order_code"),
+        ]
         indexes = [
             models.Index(fields=["user", "status"]),
         ]

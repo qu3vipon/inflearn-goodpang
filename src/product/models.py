@@ -25,6 +25,11 @@ class Product(models.Model):
         indexes = [
             models.Index(fields=["status", "price"]),
             GinIndex(fields=["search_vector"]),
+            GinIndex(
+                name="product_name_gin_index",
+                fields=["name"],
+                opclasses=["gin_bigm_ops"],
+            ),
         ]
 
 

@@ -72,3 +72,8 @@ class Migration(migrations.Migration):
       - 빠른 데이터 접근을 위해 추가적인 저장 공간 사용
     - 통계 데이터
       - 실시간 계산시, 오래 걸릴 수 있고 반복적으로 cpu 사용 -> 미리 계산해서 통계 테이블 만들면 빠른 조회 가능
+
+5. 한글 Full-text Search 구현
+- PostgreSQL 익스텐션: pg_bigm(2-gram)
+  - bi-gram: 두 개의 연속된 문자마다 인덱스를 생성하는 방식 
+  - 예) "postgresql" -> ["po", "os", "st", "tg", "gr", "re", "es"]

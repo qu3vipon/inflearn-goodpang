@@ -3,7 +3,7 @@ version: '3.9'
 services:
   db:
     container_name: goodpang-db
-    image: postgres:15
+    build: .
     restart: always
     volumes:
       - goodpang_db:/var/lib/postgresql/data

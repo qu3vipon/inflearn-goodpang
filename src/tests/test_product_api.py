@@ -61,7 +61,7 @@ def test_order_products(api_client):
 @pytest.mark.django_db
 def test_confirm_order(api_client):
     # given
-    user = ServiceUser.objects.create(email="goodpang@example.com")
+    user = ServiceUser.objects.create(email="goodpang@example.com", points=1000)
     token = authentication_service.encode_token(user_id=user.id)
 
     order = Order.objects.create(
@@ -71,7 +71,6 @@ def test_confirm_order(api_client):
     # when
     response = api_client.post(
         f"/products/orders/{order.id}/confirm",
-        data={"payment_key": "payment_key"},
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -81,3 +80,4 @@ def test_confirm_order(api_client):
 
     assert Order.objects.get(id=order.id).status == OrderStatus.PAID
     assert ServiceUser.objects.get(id=user.id).order_count == 1
+    assert ServiceUser.objects.get(id=user.id).points == 0

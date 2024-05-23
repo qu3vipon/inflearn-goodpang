@@ -1,7 +1,7 @@
 ### Section 5 - 포인트 시스템
 1. 비관적 락(pessimistic locking)
 - 데이터베이스 락을 잡고 동시성을 제어하는 방법
-- 비교적 구현이 쉽고 안전하게 데이터 정합성이 보장되지만, 락으로 인해 다른 작업이 영향을 받을 수 있고, 데드락(Deadlock)이 발생할 수 있음
+- 비교적 구현이 쉽고 강하게 데이터 정합성이 보장되지만, 락으로 인해 다른 작업이 영향을 받을 수 있고, 데드락(Deadlock) 발생 가능
   - 데드락: 두 개 이상의 작업이 서로 작업이 끝나기 만을 기다리고 있고 결과적으로 아무것도 완료되지 못하는 상태(=교착상태) 
 ```python
 class ServiceUser(models.Model):
@@ -14,13 +14,14 @@ with transaction.atomic():
     # ...
     user = ServiceUser.objects.select_for_update().get(id=user_id)
     if user.points < total_price:
-        raise UserPointsNotEnoughException
+        return 409, error_response(msg=UserPointsNotEnoughException.message)
+    
     user.points -= total_price
     user.save()
 ```
 2. 낙관적 락(optimistic locking)
 - 데이터베이스 락을 잡지 않고, unique index와 추가 컬럼을 통해 동시성을 제어하는 방법
-- 락을 잡지 않기 때문에 비관적 락에 비해 성능 저하가 적지만, 어플리케이션의 복잡도가 증가하고, 충돌 발생시 실패한 요청에 대한 처리가 필요함
+- 락을 잡지 않기 때문에 비관적 락에 비해 동시성 처리가 뛰어나지만, 어플리케이션의 복잡도가 증가하고, 충돌 발생시 실패한 요청에 대한 처리가 필요함
 ```python
 class ServiceUser(models.Model):
     # ...
@@ -37,16 +38,17 @@ with transaction.atomic():
     # ...
     user = ServiceUser.objects.get(id=user_id)
     if user.points < total_price:
-        raise UserPointsNotEnoughException
+        return 409, error_response(msg=UserPointsNotEnoughException.message)
     success: int = ServiceUser.objects.filter(id=user_id, version=user.version).update(
-      points=points - total_price,
-      version=user.version + 1
+      points=F("points") - order.total_price,
+      version=user.version + 1,
     )
     if not success:
-        raise UserVersionConflictException
+        return 409, error_response(msg=UserVersionConflictException.message)
 ```
 3. Unique 제약 응용(timestamp)
-- 주문을 사용자 별로 초당 한 번씩만 생성할 수 있게 만들기
+- 주문을 사용자 별로 초당 한 번씩만 생성할 수 있게 만들기(따닥 방지)
+  - 주문 생성시, 이메일 발송
 ```python
 class ServiceUser(models.Model):
     # ...

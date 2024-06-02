@@ -1,8 +1,5 @@
 from typing import List, Dict
 
-from django.contrib.postgres.search import SearchQuery
-from django.db import transaction
-from django.db.models import F
 from django.http import HttpRequest
 from ninja import Router
 
@@ -13,11 +10,8 @@ from product.exceptions import (
 )
 from product.models import (
     Product,
-    ProductStatus,
     Category,
-    OrderLine,
     Order,
-    OrderStatus,
 )
 from product.reponse import (
     ProductListResponse,
@@ -25,6 +19,9 @@ from product.reponse import (
     OrderDetailResponse,
 )
 from product.request import OrderRequestBody
+from product.service.category import category_service
+from product.service.order import order_service
+from product.service.product import product_service, ProductValues
 from shared.response import (
     ObjectResponse,
     response,
@@ -34,7 +31,6 @@ from shared.response import (
 )
 from user.authentication import bearer_auth, AuthRequest
 from user.exceptions import UserPointsNotEnoughException, UserVersionConflictException
-from user.models import ServiceUser, UserPointsHistory, UserPoints
 
 router = Router(tags=["Products"])
 
@@ -49,24 +45,20 @@ def product_list_handler(
     request: HttpRequest, category_id: int | None = None, query: str | None = None
 ):
     if query:
-        products = Product.objects.filter(
-            search_vector=SearchQuery(query), status=ProductStatus.ACTIVE
-        )
+        products: List[ProductValues] = product_service.search_by_query(query=query)
     elif category_id:
-        category: Category | None = Category.objects.filter(id=category_id).first()
+        category: Category | None = category_service.get_category_by_id(
+            category_id=category_id
+        )
         if not category:
             products = []
         else:
             category_ids: List[int] = [category.id] + list(
                 category.children.values_list("id", flat=True)
             )
-            products = Product.objects.filter(
-                category_id__in=category_ids, status=ProductStatus.ACTIVE
-            ).values("id", "name", "price")
+            products = product_service.filter_by_category_ids(category_ids=category_ids)
     else:
-        products = Product.objects.filter(status=ProductStatus.ACTIVE).values(
-            "id", "name", "price"
-        )
+        products = product_service.all_products()
 
     return 200, response(ProductListResponse(products=products))
 
@@ -80,7 +72,7 @@ def product_list_handler(
 def categories_list_handler(request: HttpRequest):
     return 200, response(
         CategoryListResponse.build(
-            categories=Category.objects.filter(parent=None).prefetch_related("children")
+            categories=category_service.get_parent_categories_with_children()
         )
     )
 
@@ -95,41 +87,17 @@ def categories_list_handler(request: HttpRequest):
 )
 def order_products_handler(request: AuthRequest, body: OrderRequestBody):
     product_id_to_quantity: Dict[int, int] = body.product_id_to_quantity
-
-    products: List[Product] = list(
-        Product.objects.filter(
-            id__in=product_id_to_quantity, status=ProductStatus.ACTIVE
-        )
+    products: List[Product] = product_service.filter_by_ids(
+        product_ids=product_id_to_quantity
     )
     if len(products) != len(product_id_to_quantity):
         return 400, error_response(msg=OrderInvalidProductException.message)
 
-    with transaction.atomic():
-        total_price: int = 0
-        order = Order.objects.create(user=request.user)
-
-        order_lines_to_create: List[OrderLine] = []
-        for product in products:
-            price: int = product.price
-            discount_ratio: float = 0.9
-            quantity: int = product_id_to_quantity[product.id]
-
-            order_lines_to_create.append(
-                OrderLine(
-                    order=order,
-                    product=product,
-                    quantity=quantity,
-                    price=price,
-                    discount_ratio=discount_ratio,
-                )
-            )
-
-            total_price += price * quantity * discount_ratio
-
-        order.total_price = int(total_price)
-        order.save()
-        OrderLine.objects.bulk_create(objs=order_lines_to_create)
-
+    order: Order = order_service.create_order(
+        user=request.user,
+        products=products,
+        product_id_to_quantity=product_id_to_quantity,
+    )
     return 201, response({"id": order.id, "total_price": order.total_price})
 
 
@@ -147,33 +115,14 @@ def confirm_order_payment_handler(request: AuthRequest, order_id: int):
     if not (order := Order.objects.filter(id=order_id, user=request.user).first()):
         return 404, error_response(msg=OrderNotFoundException.message)
 
-    with transaction.atomic():
-        success: int = Order.objects.filter(
-            id=order_id, status=OrderStatus.PENDING
-        ).update(status=OrderStatus.PAID)
-        if not success:
-            return 400, error_response(msg=OrderAlreadyPaidException.message)
-
-        user = ServiceUser.objects.get(id=request.user.id)
-        if user.points < order.total_price:
-            return 409, error_response(msg=UserPointsNotEnoughException.message)
-
-        success: int = ServiceUser.objects.filter(
-            id=request.user.id, version=user.version
-        ).update(
-            points=F("points") - order.total_price,
-            order_count=F("order_count") + 1,
-            version=user.version + 1,
-        )
-
-        if not success:
-            return 409, error_response(msg=UserVersionConflictException.message)
-
-        UserPointsHistory.objects.create(
-            user=user,
-            points_change=-order.total_price,
-            reason=f"orders:{order.id}:confirm",
-        )
+    try:
+        order_service.confirm_order(user_id=request.user.id, order=order)
+    except OrderAlreadyPaidException as e:
+        return 400, error_response(msg=e.message)
+    except UserPointsNotEnoughException as e:
+        return 409, error_response(msg=e.message)
+    except UserVersionConflictException as e:
+        return 409, error_response(msg=e.message)
 
     return 200, response(OkResponse())
 
@@ -192,34 +141,13 @@ def confirm_order_payment_handler_v2(request: AuthRequest, order_id: int):
     if not (order := Order.objects.filter(id=order_id, user=request.user).first()):
         return 404, error_response(msg=OrderNotFoundException.message)
 
-    with transaction.atomic():
-        success: int = Order.objects.filter(
-            id=order_id, status=OrderStatus.PENDING
-        ).update(status=OrderStatus.PAID)
-        if not success:
-            return 400, error_response(msg=OrderAlreadyPaidException.message)
-
-        last_points = (
-            UserPoints.objects.filter(user_id=request.user.id)
-            .order_by("-version")
-            .first()
-        )
-        if last_points.points_sum < order.total_price:
-            return 409, error_response(msg=UserPointsNotEnoughException.message)
-
-        UserPoints.objects.create(
-            user_id=request.user.id,
-            version=last_points.version + 1,
-            points_change=-order.total_price,
-            points_sum=last_points.points_sum - order.total_price,
-            reason=f"orders:{order.id}:confirm",
-        )
-
-        if not success:
-            return 409, error_response(msg=UserVersionConflictException.message)
-
-        ServiceUser.objects.filter(id=request.user.id).update(
-            order_count=F("order_count") + 1
-        )
+    try:
+        order_service.confirm_order_v2(user_id=request.user.id, order=order)
+    except OrderAlreadyPaidException as e:
+        return 400, error_response(msg=e.message)
+    except UserPointsNotEnoughException as e:
+        return 409, error_response(msg=e.message)
+    except UserVersionConflictException as e:
+        return 409, error_response(msg=e.message)
 
     return 200, response(OkResponse())
